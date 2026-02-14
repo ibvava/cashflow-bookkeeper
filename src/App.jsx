@@ -328,7 +328,17 @@ export default function App() {
   const [txnFilter, setTxnFilter] = useState("all");
   const [showManualTxn, setShowManualTxn] = useState(false);
   const [manualType, setManualType] = useState("expense");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [amountMin, setAmountMin] = useState("");
+  const [amountMax, setAmountMax] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
+  const [receiptPreview, setReceiptPreview] = useState(null);
+  const [pendingReceipt, setPendingReceipt] = useState(null);
+  const [viewingReceipt, setViewingReceipt] = useState(null);
   const fileRef = useRef(null);
+  const receiptRef = useRef(null);
 
   // Persist data on change
   useEffect(() => { saveData(STORAGE_KEYS.txns, transactions); }, [transactions]);
@@ -359,6 +369,32 @@ export default function App() {
       localStorage.removeItem(STORAGE_KEYS.invoices);
     }
   };
+
+  // Receipt photo handler — converts to base64 and stores with transaction
+  const handleReceiptPhoto = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const base64 = ev.target.result;
+      setPendingReceipt(base64);
+      setReceiptPreview(base64);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }, []);
+
+  // Attach receipt to existing transaction
+  const attachReceipt = useCallback((txnId, e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setTransactions((prev) => prev.map((t) => t.id === txnId ? { ...t, receipt: ev.target.result } : t));
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }, []);
 
   // ─── Stats ──────────────────────────────────────────────
   const stats = useMemo(() => {
@@ -399,11 +435,24 @@ export default function App() {
   }, [transactions]);
 
   const filteredTxns = useMemo(() => {
-    if (txnFilter === "business") return transactions.filter((t) => t.isBusiness);
-    if (txnFilter === "personal") return transactions.filter((t) => !t.isBusiness);
-    if (txnFilter === "uncategorized") return transactions.filter((t) => t.category === "personal_other" || t.category === "other_income");
-    return transactions;
-  }, [transactions, txnFilter]);
+    let result = transactions;
+    // Type filter
+    if (txnFilter === "business") result = result.filter((t) => t.isBusiness);
+    else if (txnFilter === "personal") result = result.filter((t) => !t.isBusiness);
+    else if (txnFilter === "uncategorized") result = result.filter((t) => t.category === "personal_other" || t.category === "other_income");
+    // Search query
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter((t) => t.description.toLowerCase().includes(q) || (TAX_CATEGORIES[t.type]?.[t.category]?.label || "").toLowerCase().includes(q) || (t.notes || "").toLowerCase().includes(q));
+    }
+    // Date range
+    if (dateFrom) result = result.filter((t) => t.date >= dateFrom);
+    if (dateTo) result = result.filter((t) => t.date <= dateTo);
+    // Amount range
+    if (amountMin) result = result.filter((t) => t.amount >= parseFloat(amountMin));
+    if (amountMax) result = result.filter((t) => t.amount <= parseFloat(amountMax));
+    return result;
+  }, [transactions, txnFilter, searchQuery, dateFrom, dateTo, amountMin, amountMax]);
 
   const hasData = transactions.length > 0;
   const navItems = ["home", "dashboard", "transactions", "GST / BAS", "P&L", "invoices"];
@@ -524,8 +573,28 @@ export default function App() {
                 <div style={{ ...card }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                     <div style={{ fontSize: 14, fontWeight: 700 }}>➕ Add Receipt / Transaction</div>
-                    <button onClick={() => setShowManualTxn(false)} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 18 }}>✕</button>
+                    <button onClick={() => { setShowManualTxn(false); setPendingReceipt(null); setReceiptPreview(null); }} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 18 }}>✕</button>
                   </div>
+
+                  {/* Receipt Photo Capture */}
+                  <div style={{ marginBottom: 14 }}>
+                    <input ref={receiptRef} type="file" accept="image/*" capture="environment" onChange={handleReceiptPhoto} style={{ display: "none" }} />
+                    {receiptPreview ? (
+                      <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", border: "1px solid #1e293b" }}>
+                        <img src={receiptPreview} alt="Receipt" style={{ width: "100%", maxHeight: 200, objectFit: "cover", display: "block" }} />
+                        <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6 }}>
+                          <button onClick={() => receiptRef.current?.click()} style={{ padding: "4px 10px", borderRadius: 6, border: "none", background: "rgba(0,0,0,0.7)", color: "white", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>📸 Retake</button>
+                          <button onClick={() => { setPendingReceipt(null); setReceiptPreview(null); }} style={{ padding: "4px 10px", borderRadius: 6, border: "none", background: "rgba(239,68,68,0.8)", color: "white", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>✕ Remove</button>
+                        </div>
+                        <div style={{ padding: "6px 10px", background: "rgba(16,185,129,0.1)", fontSize: 11, color: "#10b981", fontWeight: 600 }}>✅ Receipt attached</div>
+                      </div>
+                    ) : (
+                      <button onClick={() => receiptRef.current?.click()} style={{ width: "100%", padding: "18px", borderRadius: 10, border: "2px dashed #1e293b", background: "transparent", color: "#64748b", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                        <span style={{ fontSize: 22 }}>📸</span> Snap Receipt Photo
+                      </button>
+                    )}
+                  </div>
+
                   <form onSubmit={(e) => {
                     e.preventDefault();
                     const fd = new FormData(e.target);
@@ -545,9 +614,12 @@ export default function App() {
                       gstCode: cat?.gst || "BAS_EXCLUDED",
                       isBusiness: cat?.deductible === true || (isIncome && !["other_income", "govt_income"].includes(catKey)),
                       notes: fd.get("notes") || "",
+                      receipt: pendingReceipt || null,
                     };
                     setTransactions((prev) => [newTxn, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date)));
                     setShowManualTxn(false);
+                    setPendingReceipt(null);
+                    setReceiptPreview(null);
                   }} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                     <div>
                       <label style={{ fontSize: 10, color: "#64748b", fontWeight: 600, display: "block", marginBottom: 2 }}>Type</label>
@@ -727,29 +799,63 @@ export default function App() {
         {/* ═══ TRANSACTIONS ═══ */}
         {hasData && view === "transactions" && (
           <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>Transactions</h2>
                 <span style={{ color: "#64748b", fontSize: 12 }}>({filteredTxns.length})</span>
               </div>
               <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => setShowSearch(!showSearch)} style={{ ...pill(showSearch), display: "flex", alignItems: "center", gap: 4 }}>🔍 {showSearch ? "Hide" : "Search"}</button>
                 {["all", "business", "personal", "uncategorized"].map((f) => (
                   <button key={f} onClick={() => setTxnFilter(f)} style={pill(txnFilter === f)}>
-                    {f === "uncategorized" ? `⚠️ Uncategorized (${stats.uncategorized})` : f.charAt(0).toUpperCase() + f.slice(1)}
+                    {f === "uncategorized" ? `⚠️ (${stats.uncategorized})` : f.charAt(0).toUpperCase() + f.slice(1)}
                   </button>
                 ))}
               </div>
             </div>
+
+            {/* Search & Filter Bar */}
+            {showSearch && (
+              <div style={{ ...card, marginBottom: 12, padding: 14 }}>
+                <div style={{ marginBottom: 10 }}>
+                  <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search descriptions, categories, notes..." style={{ width: "100%", padding: "9px 12px", background: "#0b1120", border: "1px solid #1e293b", borderRadius: 8, color: "#e2e8f0", fontSize: 13, boxSizing: "border-box" }} />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 8, alignItems: "end" }}>
+                  <div>
+                    <label style={{ fontSize: 9, color: "#64748b", fontWeight: 600, display: "block", marginBottom: 2 }}>FROM DATE</label>
+                    <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ width: "100%", padding: "6px 8px", background: "#0b1120", border: "1px solid #1e293b", borderRadius: 6, color: "#e2e8f0", fontSize: 11, boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 9, color: "#64748b", fontWeight: 600, display: "block", marginBottom: 2 }}>TO DATE</label>
+                    <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ width: "100%", padding: "6px 8px", background: "#0b1120", border: "1px solid #1e293b", borderRadius: 6, color: "#e2e8f0", fontSize: 11, boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 9, color: "#64748b", fontWeight: 600, display: "block", marginBottom: 2 }}>MIN $</label>
+                    <input type="number" value={amountMin} onChange={(e) => setAmountMin(e.target.value)} placeholder="0" style={{ width: "100%", padding: "6px 8px", background: "#0b1120", border: "1px solid #1e293b", borderRadius: 6, color: "#e2e8f0", fontSize: 11, boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 9, color: "#64748b", fontWeight: 600, display: "block", marginBottom: 2 }}>MAX $</label>
+                    <input type="number" value={amountMax} onChange={(e) => setAmountMax(e.target.value)} placeholder="∞" style={{ width: "100%", padding: "6px 8px", background: "#0b1120", border: "1px solid #1e293b", borderRadius: 6, color: "#e2e8f0", fontSize: 11, boxSizing: "border-box" }} />
+                  </div>
+                  <button onClick={() => { setSearchQuery(""); setDateFrom(""); setDateTo(""); setAmountMin(""); setAmountMax(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.05)", color: "#ef4444", fontSize: 10, cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap" }}>Clear</button>
+                </div>
+                {(searchQuery || dateFrom || dateTo || amountMin || amountMax) && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: "#64748b" }}>
+                    Showing {filteredTxns.length} of {transactions.length} transactions
+                  </div>
+                )}
+              </div>
+            )}
             <div style={{ ...card, padding: 0, overflow: "hidden" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "82px 1fr 150px 78px 100px 56px", padding: "8px 12px", background: "#0f172a", fontSize: 9, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                <div>Date</div><div>Description</div><div>Category</div><div>GST</div><div style={{ textAlign: "right" }}>Amount</div><div style={{ textAlign: "center" }}>Biz</div>
+              <div style={{ display: "grid", gridTemplateColumns: "76px 1fr 130px 70px 94px 40px 40px", padding: "8px 12px", background: "#0f172a", fontSize: 9, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                <div>Date</div><div>Description</div><div>Category</div><div>GST</div><div style={{ textAlign: "right" }}>Amount</div><div style={{ textAlign: "center" }}>📎</div><div style={{ textAlign: "center" }}>Biz</div>
               </div>
               <div style={{ maxHeight: 440, overflowY: "auto" }}>
                 {filteredTxns.map((t) => {
                   const cat = TAX_CATEGORIES[t.type]?.[t.category];
                   const isUncat = t.category === "personal_other" || t.category === "other_income";
                   return (
-                    <div key={t.id} style={{ display: "grid", gridTemplateColumns: "82px 1fr 150px 78px 100px 56px", padding: "8px 12px", borderTop: "1px solid #1e293b", alignItems: "center", fontSize: 12, background: isUncat ? "rgba(245,158,11,0.03)" : "transparent" }}>
+                    <div key={t.id} style={{ display: "grid", gridTemplateColumns: "76px 1fr 130px 70px 94px 40px 40px", padding: "8px 12px", borderTop: "1px solid #1e293b", alignItems: "center", fontSize: 12, background: isUncat ? "rgba(245,158,11,0.03)" : "transparent" }}>
                       <div style={{ color: "#64748b", ...mono, fontSize: 10 }}>{new Date(t.date).toLocaleDateString("en-AU", { day: "2-digit", month: "short" })}</div>
                       <div style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 6 }}>{t.description}</div>
                       <div>
@@ -773,6 +879,16 @@ export default function App() {
                       </div>
                       <div><span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: t.gstCode === "GST" ? "rgba(16,185,129,0.1)" : "rgba(148,163,184,0.06)", color: t.gstCode === "GST" ? "#10b981" : "#64748b" }}>{GST_CODES[t.gstCode]?.label || t.gstCode}</span></div>
                       <div style={{ textAlign: "right", fontWeight: 600, ...mono, color: t.type === "income" ? "#10b981" : "#ef4444", fontSize: 12 }}>{t.type === "income" ? "+" : "-"}{fmt(t.amount)}</div>
+                      <div style={{ textAlign: "center" }}>
+                        {t.receipt ? (
+                          <button onClick={() => setViewingReceipt(t.receipt)} style={{ background: "rgba(16,185,129,0.12)", border: "none", borderRadius: 4, padding: "2px 6px", fontSize: 11, cursor: "pointer", color: "#10b981" }} title="View receipt">🧾</button>
+                        ) : (
+                          <label style={{ cursor: "pointer", fontSize: 11, color: "#475569" }} title="Attach receipt">
+                            📎
+                            <input type="file" accept="image/*" capture="environment" onChange={(e) => attachReceipt(t.id, e)} style={{ display: "none" }} />
+                          </label>
+                        )}
+                      </div>
                       <div style={{ textAlign: "center" }}>
                         <button onClick={() => setTransactions((p) => p.map((x) => x.id === t.id ? { ...x, isBusiness: !x.isBusiness } : x))} style={{ background: t.isBusiness ? "rgba(16,185,129,0.12)" : "rgba(148,163,184,0.08)", border: "none", borderRadius: 4, padding: "2px 6px", fontSize: 9, color: t.isBusiness ? "#10b981" : "#64748b", cursor: "pointer", fontWeight: 600 }}>
                           {t.isBusiness ? "BIZ" : "PRSNL"}
@@ -919,6 +1035,16 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* ═══ Receipt Viewer Modal ═══ */}
+      {viewingReceipt && (
+        <div onClick={() => setViewingReceipt(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: 500, width: "100%", maxHeight: "85vh", position: "relative" }}>
+            <button onClick={() => setViewingReceipt(null)} style={{ position: "absolute", top: -40, right: 0, background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 8, padding: "6px 14px", color: "white", fontSize: 14, cursor: "pointer", fontWeight: 700 }}>✕ Close</button>
+            <img src={viewingReceipt} alt="Receipt" style={{ width: "100%", maxHeight: "80vh", objectFit: "contain", borderRadius: 12, background: "#1e293b" }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
